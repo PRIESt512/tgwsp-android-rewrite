@@ -31,11 +31,26 @@
         </activity>
 
         <service
-            android:name="soft.shadlv.twp_rewritekts.TGProxyService"
+            android:name="soft.shadlv.twp_rewritekts.services.LocalTGProxyService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="specialUse"
-            android:process=":proxy_engine" />
+            android:process=":proxy_engine_local" >
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Локальный TG proxy сервис для обработки соединений Telegram" />
+        </service>
+
+        <service
+            android:name="soft.shadlv.twp_rewritekts.services.ExternalTGProxyService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":proxy_engine_external" >
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Внешний TG proxy сервис для обработки соединений Telegram" />
+        </service>
 
         <receiver
             android:name=".BootReceiver"
@@ -45,9 +60,6 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="TG proxy сервис для обработки соединений Telegram" />
         </receiver>
 
     </application>

@@ -9,10 +9,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import soft.shadlv.twp_rewritekts.repository.ProxyConfigRepository
-import soft.shadlv.twp_rewritekts.store.ProxyConfig
+import soft.shadlv.twp_rewritekts.services.ProxyType
+import soft.shadlv.twp_rewritekts.store.LocalProxyConfig
 import java.security.SecureRandom
 
-class ProxyViewModel(application: Application) : AndroidViewModel(application) {
+class LocalProxyViewModel(application: Application) : AndroidViewModel(application) {
 
     private val context = getApplication<Application>()
     private val repository = ProxyConfigRepository(application)
@@ -26,7 +27,7 @@ class ProxyViewModel(application: Application) : AndroidViewModel(application) {
     private fun loadConfig() {
         viewModelScope.launch {
             try {
-                val config = repository.getConfig()
+                val config = repository.getConfig<LocalProxyConfig>(ProxyType.LOCAL.configFileName)
 
                 if (config != null) {
                     _uiState.update {
@@ -41,7 +42,7 @@ class ProxyViewModel(application: Application) : AndroidViewModel(application) {
                     saveToDisk(true)
                 }
             } catch (ex: Exception) {
-
+                repository.dropAll(ProxyType.LOCAL.configFileName)
             }
         }
     }
@@ -64,13 +65,13 @@ class ProxyViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun saveToDisk(isFirstStart: Boolean) {
         try {
             val state = _uiState.value
-            val proxyConfig = ProxyConfig(
+            val localProxyConfig = LocalProxyConfig(
                 host = state.host,
                 port = state.port,
                 dcip = state.dcip,
                 secret = state.secret
             )
-            repository.saveConfig(proxyConfig)
+            repository.saveConfig(localProxyConfig, ProxyType.LOCAL.configFileName)
             if (!isFirstStart) Toast.makeText(context, "Успешно сохранено", Toast.LENGTH_SHORT)
                 .show()
         } catch (ex: Exception) {

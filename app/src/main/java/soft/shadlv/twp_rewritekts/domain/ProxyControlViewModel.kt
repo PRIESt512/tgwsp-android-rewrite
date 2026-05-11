@@ -10,16 +10,18 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import soft.shadlv.twp_rewritekts.ServiceDataStoreProvider
-import soft.shadlv.twp_rewritekts.TGProxyService
 import soft.shadlv.twp_rewritekts.repository.ProxyConfigRepository
+import soft.shadlv.twp_rewritekts.services.ProxyType
+import soft.shadlv.twp_rewritekts.services.ServiceDataStoreProvider
+import soft.shadlv.twp_rewritekts.services.TGProxyServiceBase
+import soft.shadlv.twp_rewritekts.store.LocalProxyConfig
 
 class ProxyControlViewModel(application: Application) : AndroidViewModel(application) {
     private val context = getApplication<Application>()
     private val repository = ProxyConfigRepository(application)
     private val navigator: ExternalNavigator = AndroidExternalNavigator(context)
 
-    val isRunning = ServiceDataStoreProvider.getInstance(context)
+    val isRunning = ServiceDataStoreProvider.getInstance(context, ProxyType.LOCAL)
         .data
         .stateIn(
             viewModelScope,
@@ -37,7 +39,7 @@ class ProxyControlViewModel(application: Application) : AndroidViewModel(applica
     fun openTelegram() =
         viewModelScope.launch {
             try {
-                val config = repository.getConfig()
+                val config = repository.getConfig<LocalProxyConfig>(ProxyType.LOCAL.configFileName)
                 if (config != null) {
                     navigator.openTelegramFromProxy(config.host, config.port, config.secret)
                 } else {
@@ -52,7 +54,7 @@ class ProxyControlViewModel(application: Application) : AndroidViewModel(applica
         }
 
     fun toggleProxy() {
-        val intent = Intent(context, TGProxyService::class.java)
+        val intent = Intent(context, TGProxyServiceBase::class.java)
 
         if (isRunning.value) {
             context.stopService(intent)

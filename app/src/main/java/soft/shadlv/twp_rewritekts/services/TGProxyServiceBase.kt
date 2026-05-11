@@ -1,4 +1,4 @@
-package soft.shadlv.twp_rewritekts
+package soft.shadlv.twp_rewritekts.services
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED
+import android.os.Process
 import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
@@ -27,7 +28,9 @@ import com.chaquo.python.PyException
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -36,11 +39,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import main.ProxyControl
+import soft.shadlv.twp_rewritekts.R
 import soft.shadlv.twp_rewritekts.repository.ProxyConfigRepository
-import soft.shadlv.twp_rewritekts.store.ProxyConfig
+import soft.shadlv.twp_rewritekts.store.LocalProxyConfig
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit.SECONDS
@@ -68,41 +73,45 @@ object StatusSerializer : Serializer<Boolean> {
 }
 
 object ServiceDataStoreProvider {
-    @Volatile
-    private var instance: DataStore<Boolean>? = null
+    private val instances = ConcurrentHashMap<ProxyType, DataStore<Boolean>>(2)
 
-    fun getInstance(context: Context): DataStore<Boolean> {
-        return instance ?: synchronized(this) {
-            instance ?: MultiProcessDataStoreFactory.create(
+    fun getInstance(context: Context, type: ProxyType): DataStore<Boolean> {
+        return instances.computeIfAbsent(type) {
+            MultiProcessDataStoreFactory.create(
                 serializer = StatusSerializer,
                 produceFile = {
-                    File(context.filesDir, "status.json")
+                    File(context.filesDir, type.statusFileName)
                 },
-                corruptionHandler = null
-            ).also { instance = it }
+                scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+            )
         }
     }
 }
 
-class TGProxyService : LifecycleService() {
+enum class ProxyType(val statusFileName: String, val configFileName: String) {
+    LOCAL("localStatus.json", "proxy_config_local.data"),
+    EXTERNAL("externalStatus.json", "proxy_config_external.data")
+}
+
+abstract class TGProxyServiceBase : LifecycleService() {
+    abstract val notificationId: Int
+    abstract val proxyType: ProxyType
+
     companion object {
         private const val CHANNEL_ID: String = "ProxyChannel"
-        private const val NOTIFICATION_ID = 1
     }
 
     private val repository by lazy { ProxyConfigRepository(application) }
-    private val proxyControl by lazy { ProxyControl() }
     private val notificationManager by lazy { getSystemService(NOTIFICATION_SERVICE) as NotificationManager }
 
     @Volatile
     private var isRun = false
 
-    /**
-     * Нет смысла держать прокси рабочим, если устройство в глубоком Doze
-     */
+    protected val proxyControl by lazy { ProxyControl() }
+
     private val dozeModeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            val powerManager = context.getSystemService(POWER_SERVICE) as PowerManager
             val isIdle = powerManager.isDeviceIdleMode
             val isScreenOn = powerManager.isInteractive
 
@@ -142,12 +151,12 @@ class TGProxyService : LifecycleService() {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
-                NOTIFICATION_ID,
+                notificationId,
                 buildNotification("Подготовка..."),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
             )
         } else {
-            startForeground(NOTIFICATION_ID, buildNotification("Подготовка..."))
+            startForeground(notificationId, buildNotification("Подготовка..."))
         }
 
         startProxy()
@@ -159,7 +168,7 @@ class TGProxyService : LifecycleService() {
         Log.d("TGProxyService", "proxy stopping")
         unregisterReceiver(dozeModeReceiver)
         stopProxy()
-        PythonBackgroundEngine.shutdown()
+        PythonBackgroundEngine.shutdown(proxyType)
         super.onDestroy()
     }
 
@@ -168,13 +177,10 @@ class TGProxyService : LifecycleService() {
         Log.d("TGProxyService", "Stop_hard")
     }
 
-    @Synchronized
     private fun startProxy() {
-        if (isRun) return
-
         lifecycleScope.launch {
             try {
-                val proxyConfig = repository.getConfig()
+                val proxyConfig = repository.getConfig<LocalProxyConfig>(proxyType.configFileName)
 
                 if (proxyConfig != null) {
                     startProxyEngine(proxyConfig)
@@ -209,18 +215,19 @@ class TGProxyService : LifecycleService() {
     }
 
     @Synchronized
-    private fun startProxyEngine(input: ProxyConfig) =
-        lifecycleScope.launch(PythonBackgroundEngine.getDispatcher()) {
+    private fun startProxyEngine(input: LocalProxyConfig) =
+        lifecycleScope.launch(PythonBackgroundEngine.getDispatcher(proxyType)) {
             try {
+                if (isRun) return@launch
+
                 Log.d(
                     "TGProxyService",
-                    "Proxy starting: Proxy Process PID: ${android.os.Process.myPid()}"
+                    "Proxy starting: Proxy Process PID: ${Process.myPid()}"
                 )
 
                 val dcip = input.dcip.replace(";", "\n")
 
                 updateProxyStatus(true, "Прокси запущен")
-
                 proxyControl.start_proxy(input.host, input.port, dcip, input.secret)
 
                 Log.d("TGProxyService", "Proxy control stopped")
@@ -240,17 +247,17 @@ class TGProxyService : LifecycleService() {
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Управление TG прокси",
+            "Управление TG прокси (${proxyType.name})",
             NotificationManager.IMPORTANCE_LOW
         ).apply {
-            description = "Уведомления о состоянии прокси-сервера"
+            description = "Уведомления о состоянии прокси-сервера (${proxyType.name})"
         }
         notificationManager.createNotificationChannel(channel)
     }
 
     private fun buildNotification(text: String): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("TG Proxy")
+            .setContentTitle("TG Proxy (${proxyType.name})")
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setOngoing(isRun)
@@ -261,8 +268,9 @@ class TGProxyService : LifecycleService() {
     private suspend fun updateProxyStatus(status: Boolean, text: String) =
         withContext(Dispatchers.IO) {
             try {
-                Log.d("TGProxyService", "Update status $status")
-                val dataStore = ServiceDataStoreProvider.getInstance(this@TGProxyService)
+                Log.d("TGProxyService - ${proxyType.name}", "Update status $status")
+                val dataStore =
+                    ServiceDataStoreProvider.getInstance(this@TGProxyServiceBase, proxyType)
                 dataStore.updateData { prefs ->
                     status
                 }
@@ -274,48 +282,50 @@ class TGProxyService : LifecycleService() {
         }
 
     private fun updateNotificationStatus(text: String) {
-        notificationManager.notify(NOTIFICATION_ID, buildNotification(text))
+        notificationManager.notify(notificationId, buildNotification(text))
     }
 }
 
 internal object PythonBackgroundEngine {
-    private var executor: ExecutorService? = null
-    private var dispatcher: CoroutineDispatcher? = null
+    private var executors  = ConcurrentHashMap<ProxyType, ExecutorService>()
+    private var dispatchers = ConcurrentHashMap<ProxyType, CoroutineDispatcher>()
 
     @Synchronized
-    fun getDispatcher(): CoroutineDispatcher {
-        if (executor == null || executor!!.isShutdown) {
-            executor = Executors.newSingleThreadExecutor { runnable ->
-                Thread(runnable, "PythonEngineThread").apply {
+    fun getDispatcher(type: ProxyType): CoroutineDispatcher {
+        return dispatchers.computeIfAbsent(type) {
+            val executor = Executors.newSingleThreadExecutor { runnable ->
+                Thread(runnable, "PythonEngineThread - ${type.name}").apply {
                     isDaemon = true
                     priority = 8
                 }
             }
-            dispatcher = executor!!.asCoroutineDispatcher()
+            executors[type] = executor
+            executor.asCoroutineDispatcher()
         }
-        return dispatcher!!
     }
 
     @Synchronized
-    fun shutdown() {
-        val exec = executor ?: return
-        exec.shutdown()
-        try {
-            if (!exec.awaitTermination(3, SECONDS)) {
-                Log.w("TGProxyService - Pool", "Executor didn't stop in time, forcing shutdownNow")
-                exec.shutdownNow()
+    fun shutdown(type: ProxyType) {
+        val exec = executors.remove(type)
+        dispatchers.remove(type)
 
-                if (!exec.awaitTermination(1, SECONDS)) {
-                    Log.e("TGProxyService - Pool", "Executor pool did not terminate")
+        exec?.let {
+            it.shutdown()
+            try {
+                if (!it.awaitTermination(3, SECONDS)) {
+                    Log.w("TGProxyService - Pool", "Executor didn't stop in time, forcing shutdownNow")
+                    it.shutdownNow()
+
+                    if (!it.awaitTermination(1, SECONDS)) {
+                        Log.e("TGProxyService - Pool", "Executor pool did not terminate")
+                    }
                 }
+            } catch (ie: InterruptedException) {
+                it.shutdownNow()
+                Thread.currentThread().interrupt()
+            } finally {
+                Log.i("TGProxyService - Pool", "Cleaned up resources for ${type.name}")
             }
-        } catch (ie: InterruptedException) {
-            exec.shutdownNow()
-            Thread.currentThread().interrupt()
-        } finally {
-            executor = null
-            dispatcher = null
-            Log.d("TGProxyService - Pool", "Cleaned up all resources")
         }
     }
 }

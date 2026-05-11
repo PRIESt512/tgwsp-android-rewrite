@@ -7,9 +7,9 @@ import androidx.lifecycle.ViewModelProvider
 class ProxyViewModelFactory(private val application: Application) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
 
-        if (modelClass.isAssignableFrom(ProxyViewModel::class.java)) {
+        if (modelClass.isAssignableFrom(LocalProxyViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return ProxyViewModel(application) as T
+            return LocalProxyViewModel(application) as T
         }
 
         throw IllegalArgumentException("Unknown ViewModel class")

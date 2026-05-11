@@ -15,11 +15,14 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.util.AtomicFile
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.security.KeyStore
+import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -154,7 +157,7 @@ class HardwareSecurityException(message: String?) : Exception(message)
 class DataStoreSecurity(context: Context) {
 
     companion object {
-        const val PROXY_CONFIG_FILE_NAME = "proxy_config.data"
+        const val DATA_STORE_TAG = "DataStoreSecurity"
         private const val GCM_IV_LENGTH = 12
         private const val GCM_TAG_LENGTH = 16
     }
@@ -162,13 +165,32 @@ class DataStoreSecurity(context: Context) {
     private val manager: SecureKeyManager = SecureKeyManager(context)
 
     @PublishedApi
-    internal val dataFile = File(context.filesDir, PROXY_CONFIG_FILE_NAME)
+    internal val filesDir: File = context.filesDir
 
     @PublishedApi
-    internal val atomicFile = AtomicFile(dataFile)
+    internal class StoreContext(
+        val mutex: Mutex,
+        val file: File,
+        val atomicFile: AtomicFile
+    )
+
+    @PublishedApi
+    internal val storeContexts = ConcurrentHashMap<String, StoreContext>()
 
     init {
         manager.initKeyStore()
+    }
+
+    @PublishedApi
+    internal fun getStoreContext(fileName: String): StoreContext {
+        return storeContexts.computeIfAbsent(fileName) {
+            val file = File(filesDir, fileName)
+            StoreContext(
+                mutex = Mutex(),
+                file = file,
+                atomicFile = AtomicFile(file)
+            )
+        }
     }
 
     @PublishedApi
@@ -205,47 +227,79 @@ class DataStoreSecurity(context: Context) {
         }
     }
 
-    suspend inline fun <reified T> saveObject(inputObject: T) = withContext(Dispatchers.IO) {
+    suspend fun deleteStore(fileName: String) = withContext(Dispatchers.IO) {
+        val context = getStoreContext(fileName)
+        context.mutex.withLock {
+            try {
+                context.atomicFile.delete()
+            } catch (ex: Exception) {
+                Log.e(DATA_STORE_TAG, "Error deleting file $fileName", ex)
+            }
+        }
+    }
+
+    suspend inline fun <reified T> saveObject(fileName: String, inputObject: T) = withContext(Dispatchers.IO) {
         try {
             val jsonString = Json.encodeToString(inputObject)
             val bytesToEncrypt = jsonString.toByteArray(Charsets.UTF_8)
             val inputByteArray = encryptBytes(bytesToEncrypt)
 
-            val fos = atomicFile.startWrite()
-            var success = false
-            try {
-                fos.write(inputByteArray)
-                success = true
-            } finally {
-                if (success) {
-                    atomicFile.finishWrite(fos)
-                } else {
-                    atomicFile.failWrite(fos)
+            val context = getStoreContext(fileName)
+
+            context.mutex.withLock {
+                val fos = context.atomicFile.startWrite()
+                var success = false
+                try {
+                    fos.write(inputByteArray)
+                    success = true
+                } finally {
+                    if (success) {
+                        context.atomicFile.finishWrite(fos)
+                    } else {
+                        context.atomicFile.failWrite(fos)
+                    }
                 }
             }
         } catch (ex: Exception) {
-            Log.e(DATA_STORE_TAG, "Error saving object", ex)
+            Log.e(DATA_STORE_TAG, "Error saving object to $fileName", ex)
             throw ex
         }
     }
 
-    suspend inline fun <reified T> getObject(): T? = withContext(Dispatchers.IO) {
-        if (!dataFile.exists()) return@withContext null
+    suspend inline fun <reified T> getObject(fileName: String): T? = withContext(Dispatchers.IO) {
+        val context = getStoreContext(fileName)
+
+        val fileBytes = context.mutex.withLock {
+            if (!context.file.exists()) return@withLock null
+
+            runCatching {
+                context.atomicFile.readFully()
+            }.onFailure {
+                Log.w(DATA_STORE_TAG, "Config file $fileName read error: ${it.message}")
+            }.getOrThrow()
+        }
+
+        if (fileBytes == null) return@withContext null
 
         return@withContext runCatching {
-            atomicFile.readFully()
-        }.mapCatching { bytes ->
-            val decryptedBytes = decryptBytes(bytes) ?: throw Exception("Decryption failed")
+            val decryptedBytes = decryptBytes(fileBytes) ?: throw Exception("Decryption failed")
             val jsonString = String(decryptedBytes, Charsets.UTF_8)
             Json.decodeFromString<T>(jsonString)
         }.onFailure {
-            Log.w(DATA_STORE_TAG, "Config file read/parse error: ${it.message}")
+            Log.w(DATA_STORE_TAG, "Config file $fileName parse error: ${it.message}")
         }.getOrThrow()
     }
 }
 
 @Serializable
-data class ProxyConfig(
+data class ExternalProxyConfig(
+    val host: String,
+    val port: Int,
+    val dcip: String,
+    val secret: String,
+)
+@Serializable
+data class LocalProxyConfig(
     val host: String,
     val port: Int,
     val dcip: String,

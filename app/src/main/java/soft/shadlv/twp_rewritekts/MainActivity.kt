@@ -38,9 +38,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import soft.shadlv.twp_rewritekts.domain.LocalProxyViewModel
 import soft.shadlv.twp_rewritekts.domain.ProxyControlViewModel
 import soft.shadlv.twp_rewritekts.domain.ProxyControlViewModelFactory
-import soft.shadlv.twp_rewritekts.domain.ProxyViewModel
 import soft.shadlv.twp_rewritekts.domain.ProxyViewModelFactory
 import soft.shadlv.twp_rewritekts.ui.HomeScreen
 import soft.shadlv.twp_rewritekts.ui.ProxyScreen
@@ -49,7 +49,7 @@ import sv.lib.squircleshape.SquircleShape
 
 class MainActivity : ComponentActivity() {
 
-    private val proxyViewModel: ProxyViewModel by viewModels {
+    private val localProxyViewModel: LocalProxyViewModel by viewModels {
         ProxyViewModelFactory(application)
     }
 
@@ -72,7 +72,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             TGProxyTheme {
-                AppNavigation(proxyControlViewModel, proxyViewModel)
+                AppNavigation(proxyControlViewModel, localProxyViewModel)
             }
         }
     }
@@ -90,7 +90,7 @@ sealed class Screen(
 }
 
 @Composable
-fun AppNavigation(proxyControlViewModel: ProxyControlViewModel, proxyViewModel: ProxyViewModel) {
+fun AppNavigation(proxyControlViewModel: ProxyControlViewModel, localProxyViewModel: LocalProxyViewModel) {
     val navController = rememberNavController()
     val items = listOf(Screen.Home, Screen.Settings)
 
@@ -157,7 +157,7 @@ fun AppNavigation(proxyControlViewModel: ProxyControlViewModel, proxyViewModel: 
             exitTransition = { fadeOut(animationSpec = tween(300)) }
         ) {
             composable(Screen.Home.route) { HomeScreen(proxyControlViewModel) }
-            composable(Screen.Settings.route) { ProxyScreen(proxyViewModel) }
+            composable(Screen.Settings.route) { ProxyScreen(localProxyViewModel) }
         }
     }
 }

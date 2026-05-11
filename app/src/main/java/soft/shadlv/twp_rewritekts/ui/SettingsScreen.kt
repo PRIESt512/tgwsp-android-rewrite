@@ -40,12 +40,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import soft.shadlv.twp_rewritekts.domain.ProxyViewModel
+import soft.shadlv.twp_rewritekts.domain.LocalProxyViewModel
 import sv.lib.squircleshape.SquircleShape
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProxyScreen(viewModel: ProxyViewModel) {
+fun ProxyScreen(viewModel: LocalProxyViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
     ProxyScreenContent(
@@ -57,8 +57,8 @@ fun ProxyScreen(viewModel: ProxyViewModel) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProxyScreenContent(
-    state: ProxyViewModel.ProxyUiState,
-    onIntent: (ProxyViewModel.ProxyIntent) -> Unit
+    state: LocalProxyViewModel.ProxyUiState,
+    onIntent: (LocalProxyViewModel.ProxyIntent) -> Unit
 ) {
     Scaffold(
         modifier = Modifier.fillMaxSize().imePadding(),
@@ -96,8 +96,8 @@ fun ProxyScreenContent(
 
 @Composable
 fun ProxyInputFields(
-    state: ProxyViewModel.ProxyUiState,
-    onValueChange: (ProxyViewModel.ProxyIntent) -> Unit
+    state: LocalProxyViewModel.ProxyUiState,
+    onValueChange: (LocalProxyViewModel.ProxyIntent) -> Unit
 ) {
     Card(elevation = CardDefaults.cardElevation(4.dp), modifier = Modifier.clip(
             SquircleShape(
@@ -112,19 +112,19 @@ fun ProxyInputFields(
         ) {
             OutlinedTextField(
                 value = state.host,
-                onValueChange = { onValueChange(ProxyViewModel.ProxyIntent.UpdateHost(it)) },
+                onValueChange = { onValueChange(LocalProxyViewModel.ProxyIntent.UpdateHost(it)) },
                 label = { Text("Server Host") },
                 modifier = Modifier.fillMaxWidth()
             )
             OutlinedTextField(
                 value = state.port.toString(),
-                onValueChange = { onValueChange(ProxyViewModel.ProxyIntent.UpdatePort(it)) },
+                onValueChange = { onValueChange(LocalProxyViewModel.ProxyIntent.UpdatePort(it)) },
                 label = { Text("Server Port") },
                 modifier = Modifier.fillMaxWidth()
             )
             OutlinedTextField(
                 value = state.dcip,
-                onValueChange = { onValueChange(ProxyViewModel.ProxyIntent.UpdateDcip(it)) },
+                onValueChange = { onValueChange(LocalProxyViewModel.ProxyIntent.UpdateDcip(it)) },
                 label = { Text("DCIP") },
                 modifier = Modifier.fillMaxWidth()
             )
@@ -135,7 +135,7 @@ fun ProxyInputFields(
                 modifier = Modifier.fillMaxWidth(),
                 trailingIcon = {
                     IconButton(onClick = {
-                        onValueChange(ProxyViewModel.ProxyIntent.RegenerateSecret)
+                        onValueChange(LocalProxyViewModel.ProxyIntent.RegenerateSecret)
                     }) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
@@ -151,7 +151,7 @@ fun ProxyInputFields(
 @Composable
 fun GlassSaveButton(
     modifier: Modifier = Modifier,
-    onClick: (ProxyViewModel.ProxyIntent) -> Unit,
+    onClick: (LocalProxyViewModel.ProxyIntent) -> Unit,
 ) {
 
     val targetBackgroundColor = Color.White.copy(alpha = 0.08f)
@@ -170,7 +170,7 @@ fun GlassSaveButton(
                     smoothing = 50
                 )
             )
-            .clickableDebounced { onClick(ProxyViewModel.ProxyIntent.SaveConfig) }
+            .clickableDebounced { onClick(LocalProxyViewModel.ProxyIntent.SaveConfig) }
             .background(backgroundColor)
             .border(
                 width = 1.dp,
@@ -203,7 +203,7 @@ fun GlassSaveButton(
 @Preview(showBackground = true)
 @Composable
 fun ProxyScreenPreview() {
-    val fakeState = ProxyViewModel.ProxyUiState(
+    val fakeState = LocalProxyViewModel.ProxyUiState(
         host = "127.0.0.1",
         port = 8080,
         dcip = "1.1.1.1",
